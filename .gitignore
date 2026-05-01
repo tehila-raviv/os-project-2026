@@ -10,8 +10,11 @@ sim
 
 # OS files
 .DS_Store
-
 Thumbs.db
 
 # Milestone 1
 dijkstra
+
+# raylib (if built from source)
+raylib/
+libraylib.a
