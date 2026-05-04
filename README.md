@@ -7,6 +7,7 @@
 | Tehila Raviv | Product Owner 
 | Tal Zada | Scrum Master 
 | Ori Azarzar | Dev Team 
+| Orel Ben David | Dev Team 
 
 ## Project Description
 
@@ -28,18 +29,21 @@ stopping briefly at intermediate stations before reaching their destination.
 │   ├── main.c          # Entry point
 │   ├── graph.c         # Graph data structure (adjacency list)
 │   ├── dijkstra.c      # Shortest path algorithm + min-heap
-│   └── parser.c        # Input file parsing & validation
+│   ├── parser.c        # Input file parsing & validation
+|   └── renderer.c      # Raylib-based graph visualization
 │  
 ├── include/
 │   ├── graph.h
 │   ├── dijkstra.h
-│   └── parser.h
+│   ├── parser.h
+│   └── renderer.h
 │   
 ├── tests/
 │   ├── test1.txt       # Normal path
 │   ├── test2.txt       # Disconnected graph (No path found)
-│   └── test3.txt       # Source == destination
-├── Makefile
+│   ├── test3.txt       # Source == destination
+|   └── test4.txt       # Large complex graph (10 stations)
+├── Makefile            # Milestone-specific build targets
 ├── .gitignore
 └── README.md
 ```
@@ -69,6 +73,12 @@ stopping briefly at intermediate stations before reaching their destination.
 ```bash
 make milestone1
 ./dijkstra tests/test1.txt
+```
+
+### Example - Milestone 2
+```bash
+make milestone2
+./sim tests/test4.txt
 ```
 
 ### Input File Format
