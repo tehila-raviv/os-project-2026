@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 #include "raylib.h"
 #include "renderer.h"
@@ -20,6 +21,10 @@
 #define COL_LABEL       ((Color){220, 230, 255, 255})   /* node ID */
 #define COL_NAME        ((Color){160, 200, 255, 200})   /* station name */
 #define COL_TITLE       ((Color){ 80, 140, 255, 255})   /* header text */
+#define COL_TRAIN       ((Color){255,  80,  80, 255})   /* train body */
+#define COL_TRAIN_GLOW  ((Color){255,  80,  80,  60})   /* train glow */
+#define COL_BTN_PLAY    ((Color){ 40, 180,  80, 255})   /* play button */
+#define COL_BTN_STOP    ((Color){200,  60,  60, 255})   /* stop button */
 
 /* ── Layout ─────────────────────────────────────────────── */
 
@@ -121,7 +126,7 @@ static void draw_weight_label(float x1, float y1, float x2, float y2,
     DrawText(buf, (int)(mx - tw / 2), (int)(my - 7), 14, COL_WEIGHT);
 }
 
-/* ── Main draw call ─────────────────────────────────────── */
+/* ── Graph draw ─────────────────────────────────────────── */
 
 void renderer_draw_graph(const Graph *g, const Vec2 *pos,
                          const char **station_names,
@@ -149,10 +154,10 @@ void renderer_draw_graph(const Graph *g, const Vec2 *pos,
     for (int u = 0; u < g->num_vertices; u++) {
         EdgeNode *e = g->lists[u].head;
         while (e) {
-            int   v      = e->dest;
+            int   v       = e->dest;
             bool  on_path = is_edge_on_path(u, v, res);
-            Color col    = on_path ? COL_PATH : COL_EDGE;
-            float thick  = on_path ? 4.0f : 1.5f;
+            Color col     = on_path ? COL_PATH : COL_EDGE;
+            float thick   = on_path ? 4.0f : 1.5f;
 
             draw_arrow(pos[u].x, pos[u].y, pos[v].x, pos[v].y, col, thick);
             draw_weight_label(pos[u].x, pos[u].y, pos[v].x, pos[v].y, e->weight);
@@ -163,8 +168,8 @@ void renderer_draw_graph(const Graph *g, const Vec2 *pos,
     /* ── Nodes ── */
     for (int i = 0; i < g->num_vertices; i++) {
         Color border = COL_NODE_BORDER;
-        if      (i == src_id)            border = COL_SOURCE;
-        else if (i == dst_id)            border = COL_DEST;
+        if      (i == src_id)             border = COL_SOURCE;
+        else if (i == dst_id)             border = COL_DEST;
         else if (is_node_on_path(i, res)) border = COL_PATH;
 
         /* Glow ring */
@@ -200,17 +205,210 @@ void renderer_draw_graph(const Graph *g, const Vec2 *pos,
     DrawRectangleLines(lx - 10, ly - 10, 185, 95, COL_GRID);
 
     DrawCircle(lx, ly,      6, COL_SOURCE);
-    DrawText("Source",       lx + 15, ly - 6,      12, WHITE);
+    DrawText("Source",       lx + 15, ly - 6,  12, WHITE);
 
     DrawCircle(lx, ly + 28, 6, COL_DEST);
-    DrawText("Destination",  lx + 15, ly + 22,     12, WHITE);
+    DrawText("Destination",  lx + 15, ly + 22, 12, WHITE);
 
     DrawLineEx((Vector2){lx - 6, ly + 56},
                (Vector2){lx + 6, ly + 56}, 3, COL_PATH);
-    DrawText("Shortest path", lx + 15, ly + 50,    12, WHITE);
+    DrawText("Shortest path", lx + 15, ly + 50, 12, WHITE);
 }
 
-/* ── Window loop ────────────────────────────────────────── */
+/* ── Play/Stop button ───────────────────────────────────── */
+
+#define BTN_X (WINDOW_WIDTH  - 140)
+#define BTN_Y 10
+#define BTN_W 120
+#define BTN_H 40
+
+static void draw_play_button(int paused) {
+    Color       bg    = paused ? COL_BTN_PLAY : COL_BTN_STOP;
+    const char *label = paused ? "  PLAY"     : "  STOP";
+    DrawRectangleRounded((Rectangle){BTN_X, BTN_Y, BTN_W, BTN_H},
+                         0.3f, 8, bg);
+    DrawRectangleRoundedLines((Rectangle){BTN_X, BTN_Y, BTN_W, BTN_H},
+                               0.3f, 8, 1.5f, WHITE);
+    DrawText(label, BTN_X + 10, BTN_Y + 11, 18, WHITE);
+}
+
+static int button_clicked(void) {
+    if (!IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) return 0;
+    Vector2 mp = GetMousePosition();
+    return mp.x >= BTN_X && mp.x <= BTN_X + BTN_W &&
+           mp.y >= BTN_Y && mp.y <= BTN_Y + BTN_H;
+}
+
+/* ── Train animation ────────────────────────────────────── */
+
+/* Look up edge weight for (u -> v) in the graph */
+static int edge_weight(const Graph *g, int u, int v) {
+    EdgeNode *e = g->lists[u].head;
+    while (e) {
+        if (e->dest == v) return e->weight;
+        e = e->next;
+    }
+    return 1; /* fallback, should never happen on a valid path */
+}
+
+/* Initialise animation state; train starts paused at source */
+static void anim_init(TrainAnim *a, const DijkstraResult *res,
+                      const Vec2 *pos) {
+    memset(a, 0, sizeof(*a));
+
+    if (!res || !res->found || res->path_len < 1) {
+        a->phase = PHASE_ARRIVED; /* nothing to animate */
+        return;
+    }
+
+    /* src == dst: already at destination */
+    if (res->path_len == 1) {
+        a->path     = res->path;
+        a->path_len = 1;
+        a->train_x  = pos[res->path[0]].x;
+        a->train_y  = pos[res->path[0]].y;
+        a->phase    = PHASE_ARRIVED;
+        return;
+    }
+
+    a->path       = res->path;
+    a->path_len   = res->path_len;
+    a->seg        = 0;
+    a->seg_weight = 0;
+    a->phase      = PHASE_TRAVELLING;
+    a->paused     = 1; /* user must press PLAY to start */
+    a->timer_ms   = 0.0;
+    a->train_x    = pos[res->path[0]].x;
+    a->train_y    = pos[res->path[0]].y;
+}
+
+/* Advance animation by delta_ms; updates train_x/train_y */
+static void anim_update(TrainAnim *a, const Graph *g,
+                        const Vec2 *pos, double delta_ms) {
+    if (a->paused || a->phase == PHASE_ARRIVED) return;
+
+    a->timer_ms += delta_ms;
+
+    if (a->phase == PHASE_IDLE) {
+        /* Waiting at an intermediate station */
+        if (a->timer_ms >= MS_STATION_WAIT) {
+            a->timer_ms   = 0.0;
+            a->seg++;
+            if (a->seg + 1 >= a->path_len) {
+                a->phase = PHASE_ARRIVED;
+                return;
+            }
+            a->phase      = PHASE_TRAVELLING;
+            a->seg_weight = edge_weight(g, a->path[a->seg],
+                                           a->path[a->seg + 1]);
+        }
+        return;
+    }
+
+    /* PHASE_TRAVELLING: lazy-load segment weight on first tick */
+    if (a->seg_weight == 0)
+        a->seg_weight = edge_weight(g, a->path[a->seg],
+                                       a->path[a->seg + 1]);
+
+    int u = a->path[a->seg];
+    int v = a->path[a->seg + 1];
+
+    /* Smooth interpolation: (elapsed_jumps + fractional) / total_jumps */
+    double total_ms = (double)a->seg_weight * MS_PER_JUMP;
+    float  t        = (float)(a->timer_ms / total_ms);
+    if (t > 1.0f) t = 1.0f;
+
+    a->train_x = pos[u].x + t * (pos[v].x - pos[u].x);
+    a->train_y = pos[u].y + t * (pos[v].y - pos[u].y);
+
+    /* Reached end of this edge */
+    if (a->timer_ms >= total_ms) {
+        a->train_x    = pos[v].x;
+        a->train_y    = pos[v].y;
+        a->timer_ms   = 0.0;
+        a->seg_weight = 0;
+
+        if (a->seg + 2 >= a->path_len) {
+            a->phase = PHASE_ARRIVED;
+        } else {
+            a->phase = PHASE_IDLE; /* wait 1 s at intermediate station */
+        }
+    }
+}
+
+/* Draw the train circle at its current position */
+static void draw_train(const TrainAnim *a) {
+    if (a->path_len == 0) return;
+
+    /* Glow */
+    DrawCircle((int)a->train_x, (int)a->train_y,
+               NODE_RADIUS - 4, COL_TRAIN_GLOW);
+    /* Body */
+    DrawCircle((int)a->train_x, (int)a->train_y,
+               NODE_RADIUS - 10, COL_TRAIN);
+    /* Border */
+    DrawCircleLines((int)a->train_x, (int)a->train_y,
+                    NODE_RADIUS - 10, WHITE);
+    /* Label */
+    DrawText("T",
+             (int)(a->train_x - 5),
+             (int)(a->train_y - 8),
+             16, WHITE);
+}
+
+/* Centred overlay shown when train reaches destination */
+static void draw_arrived_message(int src, int dst, int total_cost) {
+    char line2[64];
+    snprintf(line2, sizeof(line2),
+             "Route %d -> %d  |  Total: %d min", src, dst, total_cost);
+
+    int bw = 480, bh = 90;
+    int bx = WINDOW_WIDTH  / 2 - bw / 2;
+    int by = WINDOW_HEIGHT / 2 - bh / 2;
+
+    DrawRectangleRounded((Rectangle){(float)bx, (float)by,
+                                     (float)bw, (float)bh},
+                         0.2f, 8, (Color){10, 20, 40, 230});
+    DrawRectangleRoundedLines((Rectangle){(float)bx, (float)by,
+                                          (float)bw, (float)bh},
+                               0.2f, 8, 2.0f, COL_DEST);
+
+    const char *line1 = "Train has arrived!";
+    int tw1 = MeasureText(line1, 22);
+    DrawText(line1, WINDOW_WIDTH / 2 - tw1 / 2, by + 14, 22, COL_DEST);
+
+    int tw2 = MeasureText(line2, 16);
+    DrawText(line2, WINDOW_WIDTH / 2 - tw2 / 2, by + 48, 16, COL_LABEL);
+}
+
+/* Status bar bottom-right */
+static void draw_status(const TrainAnim *a, int src, int dst) {
+    char buf[128];
+
+    if (a->phase == PHASE_ARRIVED) {
+        snprintf(buf, sizeof(buf),
+                 "Status: Arrived at station %d", dst);
+    } else if (a->paused) {
+        int cur = (a->path && a->path_len > 0) ? a->path[a->seg] : src;
+        snprintf(buf, sizeof(buf),
+                 "Status: Paused at station %d  |  Press PLAY", cur);
+    } else if (a->phase == PHASE_IDLE) {
+        snprintf(buf, sizeof(buf),
+                 "Status: Waiting at station %d", a->path[a->seg + 1]);
+    } else {
+        int jump_now = (int)(a->timer_ms / MS_PER_JUMP) + 1;
+        snprintf(buf, sizeof(buf),
+                 "Status: Travelling  %d -> %d  (jump %d / %d)",
+                 a->path[a->seg], a->path[a->seg + 1],
+                 jump_now, a->seg_weight);
+    }
+
+    int tw = MeasureText(buf, 13);
+    DrawText(buf, WINDOW_WIDTH - tw - 12, WINDOW_HEIGHT - 26,
+             13, (Color){160, 200, 180, 220});
+}
+
+/* ── Main window loop ───────────────────────────────────── */
 
 void renderer_run(const Graph *g, const char **station_names,
                   const DijkstraResult *res, int src_id, int dst_id) {
@@ -221,10 +419,44 @@ void renderer_run(const Graph *g, const char **station_names,
                "TrainOS - Railway Traffic Simulation");
     SetTargetFPS(60);
 
+    TrainAnim anim;
+    anim_init(&anim, res, positions);
+
+    /* Preload weight for the first edge */
+    if (anim.phase == PHASE_TRAVELLING && anim.path_len >= 2)
+        anim.seg_weight = edge_weight(g, anim.path[0], anim.path[1]);
+
     while (!WindowShouldClose()) {
+        double delta_ms = GetFrameTime() * 1000.0;
+
+        /* Toggle play/stop */
+        if (button_clicked() && anim.phase != PHASE_ARRIVED)
+            anim.paused = !anim.paused;
+
+        /* Advance animation */
+        anim_update(&anim, g, positions, delta_ms);
+
         BeginDrawing();
+
+        /* Static graph (always drawn) */
         renderer_draw_graph(g, positions, station_names,
                             res, src_id, dst_id);
+
+        /* Play/Stop button (hidden after arrival) */
+        if (anim.phase != PHASE_ARRIVED)
+            draw_play_button(anim.paused);
+
+        /* Train */
+        draw_train(&anim);
+
+        /* Arrived overlay */
+        if (anim.phase == PHASE_ARRIVED && res && res->found
+                && res->path_len > 1)
+            draw_arrived_message(src_id, dst_id, res->total_cost);
+
+        /* Status bar */
+        draw_status(&anim, src_id, dst_id);
+
         EndDrawing();
     }
 
