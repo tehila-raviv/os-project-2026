@@ -48,7 +48,8 @@ stopping briefly at intermediate stations before reaching their destination.
 │   ├── test6.txt       # Heavy weights vs short path
 │   ├── test7.txt       # Single edge, minimal animation
 │   ├── test8.txt       # src == dst inside a larger graph
-│   └── test9.txt       # Disconnected graph, no animation
+│   ├── test9.txt       # Disconnected graph, no animation
+│   └── test10.txt      # Graph with a cycle
 │
 ├── Makefile
 ├── .gitignore
@@ -142,6 +143,7 @@ make test-m3-6   # heavy weights
 make test-m3-7   # single edge
 make test-m3-8   # src == dst
 make test-m3-9   # disconnected graph
+make test-m3-10  # graph with a cycle
 ```
 
 ---
