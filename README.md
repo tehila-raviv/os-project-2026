@@ -11,106 +11,103 @@
 
 ## Project Description
 
-TrainOS is a simulation of a railway traffic system modeled as a directed weighted graph.
+TrainOS is a simulation of a railway traffic system modelled as a directed weighted graph.
 Multiple trains (processes) travel simultaneously across a network of stations,
 using OS mechanisms learned in the course: processes, inter-process communication,
-synchronization, and scheduling.
+synchronisation, and scheduling.
 
-Each station is a node in the graph and each railway track is a directed weighted edge,
-where the weight represents the travel time between stations.
-Trains compute the shortest route using Dijkstra's algorithm and travel along it,
-stopping briefly at intermediate stations before reaching their destination.
+Each station is a node in the graph and each railway track is a directed weighted edge
+whose weight represents travel time. Trains compute the shortest route using Dijkstra's
+algorithm and travel along it, pausing briefly at intermediate stations.
 
 ## Project Structure
 
 ```
 .
 ├── src/
-│   ├── main.c          # Entry point
-│   ├── graph.c         # Graph data structure (adjacency list)
-│   ├── dijkstra.c      # Shortest path algorithm + min-heap
-│   ├── parser.c        # Input file parsing & validation
+│   ├── main.c          # Entry point (fork logic from Milestone 4)
+│   ├── graph.c         # Adjacency-list graph
+│   ├── dijkstra.c      # Shortest path + min-heap
+│   ├── parser.c        # Input file parsing (single & multi-traveler)
 │   └── renderer.c      # GUI rendering & animation (Milestone 2+)
 │
 ├── include/
 │   ├── graph.h
 │   ├── dijkstra.h
-│   ├── parser.h
-│   └── renderer.h      # GUI types & constants (Milestone 2+)
+│   ├── parser.h        # Extended with TravelerQuery from Milestone 4
+│   └── renderer.h      # Extended for multiple travelers from Milestone 4
 │
 ├── tests/
-│   ├── test1.txt       # Normal path
-│   ├── test2.txt       # Disconnected graph (no path found)
-│   ├── test3.txt       # Source == destination
-│   ├── test4.txt       # Larger graph (10 nodes)
-│   ├── test4b.txt      # Large graph (15 nodes, max supported)
-│   ├── test5.txt       # Long path, many intermediate stops
+│   ├── test1.txt       # Single traveler – normal path
+│   ├── test2.txt       # Single traveler – disconnected graph
+│   ├── test3.txt       # Single traveler – src == dst
+│   ├── test4.txt       # Single traveler – larger graph (10 nodes)
+│   ├── test4b.txt      # Single traveler – 15 nodes
+│   ├── test5.txt       # Long path, many stops
 │   ├── test6.txt       # Heavy weights vs short path
 │   ├── test7.txt       # Single edge, minimal animation
 │   ├── test8.txt       # src == dst inside a larger graph
-│   ├── test9.txt       # Disconnected graph, no animation
-│   └── test10.txt      # Graph with a cycle
+│   ├── test9.txt       # Disconnected graph
+│   ├── test10.txt      # Graph with a cycle
+│   ├── testm4.txt     # Milestone 4 – 3 travelers
+│   └── tesm4b.txt    # Milestone 4 – 4 travelers (incl. edge cases)
 │
 ├── Makefile
-├── .gitignore
 └── README.md
 ```
 
 ## Dependencies
 
 - GCC
-- [raylib](https://www.raylib.com/) — required from Milestone 2 onward
+- [raylib](https://www.raylib.com/) -required from Milestone 2 onward
   ```bash
   sudo apt install libraylib-dev
   ```
 
 ## Input File Format
 
+### Milestones 1–3 (single traveler)
 ```
-N M          # N = number of stations, M = number of tracks
-src dst w    # directed edge: station src -> dst with travel time w
+N M          # N = stations, M = tracks
+src dst w    # directed edge with travel-time weight w
 ...
-src dst      # query: find shortest path from src to dst
+src dst      # Dijkstra query
+```
+
+### Milestone 4+ (multiple travelers)
+```
+# graph definition   ← optional comment
+N M
+src dst w
+...
+# travelers          ← optional comment
+K                    # number of travelers
+src dst              # K traveler queries
+...
 ```
 
 ---
 
 ## Milestones
 
-### Milestone 1 — Graph Representation + Dijkstra
+### Milestone 1 -Graph Representation + Dijkstra
 
-**Implementation:**
-The graph is represented as a directed weighted adjacency list (`graph.c`).
-Each node is a station and each edge is a track with a travel-time weight.
-Dijkstra's algorithm is implemented using a custom min-heap (`dijkstra.c`) for efficient
-shortest-path computation. The parser (`parser.c`) reads the input file, validates all
-fields (negative weights, out-of-range vertices), builds the graph, and returns the
-source/destination query. Results are printed to stdout in the required format.
+Directed weighted adjacency list (`graph.c`). Dijkstra with a custom min-heap
+(`dijkstra.c`). Parser validates negative weights and out-of-range vertices.
 
-**Build & Run:**
 ```bash
 make milestone1
 ./dijkstra tests/test1.txt
-```
-
-**Test all Milestone 1 cases:**
-```bash
-make test-m1
+make test-m1          # run all terminal tests
 ```
 
 ---
 
-### Milestone 2 — GUI: Static Graph Display
+### Milestone 2 -GUI: Static Graph Display
 
-**Implementation:**
-A graphical window is opened using raylib (`renderer.c`).
-All stations are laid out in a circular arrangement on screen.
-Directed edges are drawn as arrows with weight labels.
-The shortest path computed by Dijkstra is highlighted in green.
-Source and destination nodes are colour-coded (white and amber).
-A legend and route info bar are displayed.
+raylib window with circular node layout, directed-edge arrows, weight labels,
+path highlighting, and a colour-coded legend.
 
-**Build & Run:**
 ```bash
 make milestone2
 ./sim tests/test1.txt
@@ -118,93 +115,82 @@ make milestone2
 
 ---
 
-### Milestone 3 — Movement Animation
+### Milestone 3 -Movement Animation
 
-**Implementation:**
-A train (red circle labelled "T") animates along the Dijkstra shortest path.
-Each edge with weight W is traversed in W × 300ms, giving travel time proportional
-to edge weight. The train pauses for 1 second at each intermediate station before
-continuing. A PLAY/STOP button (top-right) controls the animation — the train starts
-paused and only moves after the user presses PLAY. When the train reaches the
-destination a centred "Train has arrived!" overlay is shown with the route and total
-cost. A live status bar (bottom-right) shows the current phase and jump progress.
-Edge cases handled: disconnected graph (no animation), src == dst (arrived immediately).
+Animated train (red circle "T") travels along the Dijkstra path. Travel time is
+proportional to edge weight (300 ms per weight unit). 1-second pause at each
+intermediate station. PLAY/STOP button, arrival overlay, live status bar.
 
-**Build & Run:**
 ```bash
 make milestone3
 ./sim tests/test1.txt
 ```
 
-**Run individual animation tests:**
-```bash
-make test-m3-5   # long path, many stops
-make test-m3-6   # heavy weights
-make test-m3-7   # single edge
-make test-m3-8   # src == dst
-make test-m3-9   # disconnected graph
-make test-m3-10  # graph with a cycle
-```
-
 ---
 
-### Milestone 4 — Multiple Processes + Parent Process
-*Coming soon*
+### Milestone 4 -Multiple Processes + Parent Process
 
-**Build & Run:**
+**Architecture:**
+
+The parent process:
+1. Reads the extended input file (graph + traveler list).
+2. Computes the Dijkstra shortest path for every traveler.
+3. `fork()`s one child process per traveler.
+4. Runs the raylib GUI, animating all travelers simultaneously in distinct colours.
+5. Sends `SIGTERM` to a child process when its traveler's animation completes.
+6. Calls `waitpid()` for every child before exiting.
+
+Each child process:
+1. Prints `[PID] started` immediately after creation.
+2. Sleeps indefinitely (`sleep(3600)` loop) until `SIGTERM` arrives.
+
+All traveler animations run in parallel -each train is drawn in a unique colour
+(up to 16 distinct colours). The legend identifies each traveler by index and
+shows its route. "Train N arrived" overlays appear in the bottom-left corner as
+each traveler finishes.
+
 ```bash
 make milestone4
-./sim tests/test1.txt
+./sim tests/test_m4.txt    # 3 travelers
+./sim tests/test_m4b.txt   # 4 travelers (includes src==dst and longer paths)
 ```
+
+**Self-check:**
+- `fork()` is called once per traveler -verify with `ps` or terminal output.
+- Each child prints `[PID] started` before sleeping.
+- All trains move concurrently (not sequentially).
+- Parent calls `waitpid()` for every child -no zombie processes.
 
 ---
 
-### Milestone 5 — Inter-Process Communication
+### Milestone 5 -Inter-Process Communication
 *Coming soon*
 
-**Build & Run:**
-```bash
-make milestone5
-./sim tests/test1.txt
-```
-
 ---
 
-### Milestone 6 — Synchronization
+### Milestone 6 -Synchronization
 *Coming soon*
 
-**Build & Run:**
-```bash
-make milestone6
-./sim tests/test1.txt
-```
-
 ---
 
-### Milestone 7 — Scheduling Algorithms
+### Milestone 7 -Scheduling Algorithms
 *Coming soon*
 
-**Build & Run:**
-```bash
-make milestone7
-./sim -schd fcfs tests/test1.txt
-./sim -schd sjf  tests/test1.txt
-```
-
 ---
 
-## Clean
+## Build & Clean
 
 ```bash
-make clean
+make            # builds milestone4 (default)
+make clean      # removes obj/ and binaries
 ```
 
 ## Git Workflow
 
-- Each milestone is developed on its own branch (`milestone1`, `milestone2`, etc.)
-- Merge into `main` only when a milestone is complete and tested
-- Each milestone is tagged before submission:
+- Each milestone is developed on its own branch (`milestone1`, `milestone2`, …).
+- Merge into `main` only when a milestone is complete and tested.
+- Tag each submission:
   ```bash
-  git tag milestoneN
-  git push origin milestoneN --tags
+  git tag milestone4
+  git push origin milestone4 --tags
   ```
