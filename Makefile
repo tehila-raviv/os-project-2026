@@ -35,7 +35,7 @@ $(TARGET_M1): $(OBJS_M1)
 	$(CC) $(CFLAGS) -o $@ $^ -lm
 
 $(OBJ_DIR)/m1_%.o: $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -DMILESTONE1 -c -o $@ $<
 
 # ── Milestones 2 / 3 / 4 (GUI + raylib) ──────────────────────
 milestone2: $(OBJ_DIR) $(TARGET_M2)
