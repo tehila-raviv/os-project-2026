@@ -49,8 +49,8 @@ algorithm and travel along it, pausing briefly at intermediate stations.
 │   ├── test8.txt       # src == dst inside a larger graph
 │   ├── test9.txt       # Disconnected graph
 │   ├── test10.txt      # Graph with a cycle
-│   ├── testm4.txt     # Milestone 4 – 3 travelers
-│   └── tesm4b.txt    # Milestone 4 – 4 travelers (incl. edge cases)
+│   ├── testm4.txt      # Milestone 4 – 3 travelers
+│   └── tesm4b.txt      # Milestone 4 – 4 travelers (incl. edge cases)
 │
 ├── Makefile
 └── README.md
