@@ -57,7 +57,7 @@ clean:
 
 # ── Run shortcuts ─────────────────────────────────────────────
 run: milestone4
-	./$(TARGET_M2) tests/test_m4.txt
+	./$(TARGET_M2) tests/testm4.txt
 
 # ── Milestone 1 terminal tests ────────────────────────────────
 test-m1: milestone1
@@ -75,10 +75,10 @@ test-m1: milestone1
 
 # ── Milestone 4 GUI tests ─────────────────────────────────────
 test-m4: milestone4
-	./$(TARGET_M2) tests/test_m4.txt
+	./$(TARGET_M2) tests/testm4.txt
 
 test-m4-b: milestone4
-	./$(TARGET_M2) tests/test_m4b.txt
+	./$(TARGET_M2) tests/testm4b.txt
 
 # ── Valgrind (terminal binary, no raylib noise) ───────────────
 valgrind: milestone1
