@@ -164,10 +164,10 @@ int main(int argc, char *argv[]) {
     #else
         (void)STATION_NAMES;
         printf("(No GUI: compile with -DWITH_RAYLIB to enable animation)\n");
-    #endif
 
-    /* Terminate children before waitpid() so the parent does not wait forever. */
-    parent_signal_handler(SIGTERM);
+        /* Terminate children before waitpid() so the parent does not wait forever. */
+        parent_signal_handler(SIGTERM);
+    #endif
 
     /* ── Parent: wait for every child (normal exit or Ctrl+C) ── */
     for (int i = 0; i < num_travelers; i++) {
