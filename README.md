@@ -24,7 +24,7 @@ represents travel time. Trains compute the shortest route using Dijkstra's algor
 ```
 .
 ├── src/
-│   ├── main.c        # Entry point - fork logic, signal handling, waitpid
+│   ├── main.c        # Entry point - fork, IPC drain (select), waitpid
 │   ├── graph.c       # Adjacency-list directed weighted graph
 │   ├── dijkstra.c    # Shortest path + custom min-heap
 │   ├── parser.c      # Input file parsing (multi-traveler format)
@@ -34,6 +34,7 @@ represents travel time. Trains compute the shortest route using Dijkstra's algor
 │   ├── graph.h
 │   ├── dijkstra.h
 │   ├── parser.h
+│   ├── ipc.h         # IpcMsg struct, MAX_TRAVELERS, MS_PER_JUMP
 │   └── renderer.h
 │
 ├── tests/
@@ -49,7 +50,9 @@ represents travel time. Trains compute the shortest route using Dijkstra's algor
 │   ├── test9.txt     # Disconnected graph
 │   ├── test10.txt    # Graph with a cycle
 │   ├── testm4.txt    # Milestone 4 - 3 travelers
-│   └── testm4b.txt   # Milestone 4 - 4 travelers (edge cases)
+│   ├── testm4b.txt   # Milestone 4 - 4 travelers (edge cases)
+│   ├── testm5.txt    # Milestone 5 - professor's example (2 travelers)
+│   └── testm5b.txt   # Milestone 5 - 3 travelers (edge cases)
 │
 ├── Makefile
 └── README.md
@@ -93,7 +96,8 @@ src dst      # K traveler queries
 make milestone1    # builds ./dijkstra  (terminal, single traveler)
 make milestone2    # builds ./sim       (GUI, static graph)
 make milestone3    # builds ./sim       (GUI, animation)
-make milestone4    # builds ./sim       (GUI, animation, multi-process)
+make milestone4    # builds ./sim       (GUI, multi-process)
+make milestone5    # builds ./sim       (GUI, multi-process + IPC)
 make clean
 ```
 
@@ -142,44 +146,74 @@ make milestone3
 
 ### Milestone 4 - Multiple Processes
 
-**Architecture:**
-
-The parent process:
-1. Reads the extended input file (graph + traveler list).
-2. Computes the Dijkstra shortest path for every traveler.
-3. `fork()`s one child process per traveler.
-4. Runs the raylib GUI, animating all travelers simultaneously in distinct colours.
-5. Sends `SIGTERM` to each child when its animation completes.
-6. Calls `waitpid()` for every child before exiting.
-
-Each child process:
-1. Prints `[PID] started` immediately after creation.
-2. Sleeps indefinitely (`sleep(3600)` loop) until `SIGTERM` arrives.
-
-All traveler animations run in parallel - each train is drawn in a unique colour
-(up to 16 distinct colours). The legend identifies each traveler by index and
-shows its route. Arrived trains remain visible at their destination in a faded
-style. Signal handling ensures clean shutdown on Ctrl+C with no zombie processes.
+The parent computes all Dijkstra paths, forks one child per traveler, runs the
+GUI showing all trains simultaneously in distinct colours. Each child prints
+`[PID] started`, then sleeps until the parent sends SIGTERM when its animation
+finishes. Parent calls `waitpid()` for every child before exiting.
 
 ```bash
 make milestone4
-./sim tests/testm4.txt     # 3 travelers
-./sim tests/testm4b.txt    # 4 travelers (includes src==dst and longer paths)
+./sim tests/testm4.txt
+./sim tests/testm4b.txt
 make test-m4
 make test-m4-b
 ```
 
-**Self-check:**
-- `fork()` is called once per traveler - verify with `ps` or terminal output.
-- Each child prints `[PID] started` before sleeping.
-- All trains move concurrently (not sequentially).
-- Parent calls `waitpid()` for every child - no zombie processes.
-- Ctrl+C terminates all children cleanly.
-
 ---
 
-### Milestone 5 - Inter-Process Communication
-*Coming soon*
+### Milestone 5 - Inter-Process Communication (IPC)
+
+**IPC mechanism chosen: pipes (one anonymous pipe per child).**
+
+**Why pipes?**
+- Simple and portable - no setup beyond `pipe()`.
+- Each child has its own dedicated pipe so the parent always knows which child
+  sent a message without needing an ID field in the packet.
+- File descriptors close automatically when a process exits - no cleanup needed.
+- Works naturally with `select()` for fair interleaving of messages from
+  multiple children in the terminal log loop.
+
+**Architecture change from Milestone 4:**
+
+In Milestone 4 the parent computed all paths and the children only slept.
+In Milestone 5 each child is fully autonomous:
+1. Re-reads the input file and builds its own graph independently.
+2. Runs Dijkstra for its own `src->dst` pair.
+3. Walks the path node by node, sleeping `edge_weight × 300 ms` between steps.
+4. On every node arrival, writes one `IpcMsg` (current node, next node) to its pipe.
+5. Exits normally when the destination is reached.
+
+The parent reads these messages each frame (non-blocking), updates the GUI
+animation, and prints the log. Children no longer print anything.
+
+**Terminal log format (parent prints all output):**
+```
+[PID=1021] arrived at node 0 | next node: 2
+[PID=1022] arrived at node 2 | next node: 1
+[PID=1021] arrived at node 2 | next node: 1
+[PID=1022] arrived at node 1 | next node: 3
+[PID=1021] arrived at node 1 | next node: 4
+[PID=1022] arrived at node 3 | DESTINATION
+[PID=1021] arrived at node 4 | DESTINATION
+[PID=1022] finished
+[PID=1021] finished
+```
+
+```bash
+make milestone5
+./sim tests/testm5.txt     # professor's example (2 travelers)
+./sim tests/testm5b.txt    # edge cases (3 travelers)
+make test-m5
+make test-m5-b
+```
+
+**Self-check:**
+- Path data is never passed from parent to child - each child computes its own.
+- Every node arrival generates exactly one log line in the terminal.
+- `[PID=X] finished` appears for every child after `waitpid()`.
+- No zombie processes - parent waits for all children.
+
+---
 
 ### Milestone 6 - Synchronization
 *Coming soon*
@@ -195,6 +229,6 @@ make test-m4-b
 - Merge into `main` only when a milestone is complete and tested.
 - Tag each submission:
   ```bash
-  git tag milestone4
-  git push origin milestone4 --tags
+  git tag milestone5
+  git push origin milestone5 --tags
   ```
