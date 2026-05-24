@@ -1,0 +1,22 @@
+# graph definition (10 nodes, 14 edges — same as test4)
+10 14
+0 1 5
+0 2 3
+1 3 4
+1 4 2
+2 4 6
+2 5 8
+3 6 3
+4 6 1
+4 7 5
+5 7 2
+6 8 4
+7 8 3
+7 9 6
+8 9 2
+# travelers
+4
+0 9
+3 3
+0 8
+2 7
