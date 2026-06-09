@@ -25,8 +25,9 @@ OBJS_M2 = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/m2_%.o,  $(SRCS))
 OBJS_M3 = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/m3_%.o,  $(SRCS))
 OBJS_M4 = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/m4_%.o,  $(SRCS))
 OBJS_M5 = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/m5_%.o,  $(SRCS))
+OBJS_M6 = $(patsubst $(SRC_DIR)/%.c, $(OBJ_DIR)/m6_%.o,  $(SRCS))
 
-all: milestone5
+all: milestone6
 
 # ── Milestone 1: terminal only, single traveler ───────────────
 milestone1: $(OBJ_DIR) $(OBJS_M1)
@@ -63,6 +64,13 @@ milestone5: $(OBJ_DIR) $(OBJS_M5)
 $(OBJ_DIR)/m5_%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -DMILESTONE5 -DWITH_RAYLIB -c -o $@ $<
 
+# ── Milestone 6: synchronization — one traveler per node ─────
+milestone6: $(OBJ_DIR) $(OBJS_M6)
+	$(CC) $(CFLAGS) -o $(TARGET_M2) $(OBJS_M6) $(RAYLIB_FLAGS)
+
+$(OBJ_DIR)/m6_%.o: $(SRC_DIR)/%.c
+	$(CC) $(CFLAGS) -DMILESTONE6 -DWITH_RAYLIB -c -o $@ $<
+
 # ── Utility ───────────────────────────────────────────────────
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
@@ -71,8 +79,8 @@ clean:
 	rm -rf $(OBJ_DIR) $(TARGET_M1) $(TARGET_M2)
 
 # ── Run shortcuts ─────────────────────────────────────────────
-run: milestone5
-	./$(TARGET_M2) tests/testm5.txt
+run: milestone6
+	./$(TARGET_M2) tests/testm6.txt
 
 # ── Per-milestone test shortcuts ──────────────────────────────
 test-m1: milestone1
@@ -106,6 +114,12 @@ test-m5: milestone5
 test-m5-b: milestone5
 	./$(TARGET_M2) tests/testm5b.txt
 
+test-m6: milestone6
+	./$(TARGET_M2) tests/testm6.txt
+
+test-m6-b: milestone6
+	./$(TARGET_M2) tests/testm6b.txt
+
 # ── Valgrind ──────────────────────────────────────────────────
 valgrind: milestone1
 	@echo "=== valgrind test1 ==="
@@ -125,5 +139,6 @@ valgrind: milestone1
 	         ./$(TARGET_M1) tests/test4.txt
 
 .PHONY: all clean run \
-        milestone1 milestone2 milestone3 milestone4 milestone5 \
-        test-m1 test-m2 test-m3 test-m4 test-m4-b test-m5 test-m5-b valgrind
+        milestone1 milestone2 milestone3 milestone4 milestone5 milestone6 \
+        test-m1 test-m2 test-m3 test-m4 test-m4-b \
+        test-m5 test-m5-b test-m6 test-m6-b valgrind
