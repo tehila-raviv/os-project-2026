@@ -20,21 +20,19 @@ typedef struct {
 
 /* Animation phase for a single traveler */
 typedef enum {
-    PHASE_IDLE,        /* waiting at an intermediate station  */
-    PHASE_TRAVELLING,  /* moving along an edge                */
-    PHASE_ARRIVED      /* reached the final destination       */
+    PHASE_IDLE,        /* waiting at an intermediate station (holds node lock) */
+    PHASE_TRAVELLING,  /* moving along an edge                                 */
+    PHASE_WAITING,     /* blocked outside a node — waiting for the lock (M6)   */
+    PHASE_ARRIVED      /* reached the final destination                        */
 } TrainPhase;
 
 /*
- * Per-traveler animation state (Milestone 5).
+ * Per-traveler animation state.
  *
- * The parent does NOT hold the full path array. It only knows:
- *   cur_node  — the node the traveler just arrived at
- *   next_node — the next node it is heading toward (-1 = destination)
- *
- * The animation slides the train smoothly from cur_node to next_node
- * based on the edge weight looked up in the graph, then waits for the
- * next IPC message to update those two fields.
+ * waiting_for_node: set when phase == PHASE_WAITING.
+ *   The train icon is drawn near the destination node but outside it,
+ *   with a distinct colour, until the lock is acquired and MSG_AT_NODE
+ *   arrives to transition the phase to PHASE_IDLE / PHASE_TRAVELLING.
  */
 typedef struct {
     pid_t child_pid;    /* PID of the child process              */
@@ -45,6 +43,10 @@ typedef struct {
     int   cur_node;     /* node the traveler just arrived at     */
     int   next_node;    /* next node (-1 = at destination)       */
 
+    /* M6: node this traveler is currently blocked outside of.
+       Valid only when phase == PHASE_WAITING. */
+    int   waiting_for_node;
+
     float train_x;      /* current screen position               */
     float train_y;
 
@@ -52,7 +54,7 @@ typedef struct {
     TrainPhase phase;
 
     /* Optional full path for M2/M3/M4 (no IPC — renderer drives animation).
-       NULL in M5 (IPC messages drive animation instead). */
+       NULL in M5/M6 (IPC messages drive animation instead). */
     const int *path;      /* array of node IDs src->dst */
     int        path_len;  /* total nodes in path        */
     int        seg;       /* current segment index      */
@@ -63,7 +65,7 @@ void renderer_compute_positions(int num_nodes, Vec2 *positions);
 
 /* Draw the full graph with all current traveler positions */
 /* animate=0: highlight full path statically (M2)
-   animate=1: highlight only current segment (M3/M4/M5) */
+   animate=1: highlight only current segment (M3/M4/M5/M6) */
 void renderer_draw_graph(const Graph     *g,
                          const Vec2      *positions,
                          const char     **station_names,
@@ -79,7 +81,7 @@ void renderer_draw_graph(const Graph     *g,
  * prints the log line, and updates the animation state.
  * Blocks until the user closes the window or all children finish.
  */
-/* animate=0: static display only (M2); animate=1: train movement (M3/M4/M5) */
+/* animate=0: static display only (M2); animate=1: train movement (M3/M4/M5/M6) */
 void renderer_run(const Graph  *g,
                   const char  **station_names,
                   TrainAnim    *anim_list,
