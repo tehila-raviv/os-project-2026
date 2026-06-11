@@ -1,0 +1,14 @@
+# Milestone 6 guaranteed contention demo
+# 3 travelers from different sources, edge weight=3 (900ms travel)
+# node_stay=1000ms, so all 3 arrive at node 3 within ms of each other
+# and must queue up one by one - guaranteed 3-deep waiting queue
+5 4
+0 3 3
+1 3 3
+2 3 3
+3 4 1
+# travelers
+3
+0 4
+1 4
+2 4
