@@ -8,6 +8,15 @@
 | Tal Zada | Scrum Master |
 | Ori Azarzar | Dev Team |
 | Orel Ben David | Dev Team |
+ 
+## Background Story
+ 
+TrainOS is a railway traffic control system for a network of stations connected
+by tracks. Each train is an independent OS process that computes its own shortest
+route using Dijkstra's algorithm and travels autonomously across the network.
+The system enforces station capacity (at most one train per station at a time)
+and lets operators choose the scheduling policy that controls which waiting train
+enters a busy station next.
 
 ## Project Description
 
@@ -20,22 +29,24 @@ Each station is a graph node; each track is a directed weighted edge whose weigh
 represents travel time. Trains compute the shortest route using Dijkstra's algorithm.
 
 ## Project Structure
-
+ 
 ```
 .
 ├── src/
-│   ├── main.c        # Entry point - fork, IPC drain (select), waitpid, M6 semaphores
+│   ├── main.c        # Entry point - milestone selector, fork, IPC, semaphores, scheduler
 │   ├── graph.c       # Adjacency-list directed weighted graph
 │   ├── dijkstra.c    # Shortest path + custom min-heap
-│   ├── parser.c      # Input file parsing (multi-traveler format)
-│   └── renderer.c    # raylib GUI rendering & animation (M2+)
+│   ├── parser.c      # Input file parsing (single and multi-traveler formats)
+│   ├── renderer.c    # raylib GUI rendering & animation (M2+)
+│   └── scheduler.c   # Parent-side node scheduling: FCFS and SJF (M7)
 │
 ├── include/
 │   ├── graph.h
 │   ├── dijkstra.h
 │   ├── parser.h
-│   ├── ipc.h         # IpcMsg struct, message types, semaphore names, constants
-│   └── renderer.h
+│   ├── ipc.h         # IpcMsg struct, message types, pipe signals, SchedAlgo enum
+│   ├── renderer.h
+│   └── scheduler.h   # NodeQueue struct, sched_init/request/release API (M7)
 │
 ├── tests/
 │   ├── test1.txt     # Single traveler - normal path
@@ -53,8 +64,9 @@ represents travel time. Trains compute the shortest route using Dijkstra's algor
 │   ├── testm4b.txt   # Milestone 4 - 4 travelers (edge cases)
 │   ├── testm5.txt    # Milestone 5 - 2 travelers
 │   ├── testm5b.txt   # Milestone 5 - 3 travelers (edge cases)
-│   ├── testm6.txt    # Milestone 6 - 3 travelers, general sync test
-│   └── testm6b.txt   # Milestone 6 - bottleneck demo (3 travelers forced through node 3)
+│   ├── testm6.txt    # Milestone 6 - 4 travelers, general sync test
+│   ├── testm6b.txt   # Milestone 6 - bottleneck demo (3 travelers forced through node 3)
+│   └── testm7b.txt   # Milestone 7 - FCFS vs SJF clearly differ (different destinations)
 │
 ├── Makefile
 └── README.md
@@ -101,6 +113,7 @@ make milestone3    # builds ./sim       (GUI, animation)
 make milestone4    # builds ./sim       (GUI, multi-process)
 make milestone5    # builds ./sim       (GUI, multi-process + IPC)
 make milestone6    # builds ./sim       (GUI, multi-process + IPC + node sync)
+make milestone7    # builds ./sim       (GUI, multi-process + IPC + scheduling)
 make clean
 ```
 
@@ -110,6 +123,8 @@ make clean
 ./sim tests/testm4.txt              # M2/M3/M4
 ./sim tests/testm5.txt              # M5
 ./sim tests/testm6b.txt             # M6 bottleneck demo
+./sim -schd fcfs tests/testm7b.txt       # M7 FCFS demo
+./sim -schd sjf  tests/testm7b.txt       # M7 SJF demo
 ```
 
 ### Valgrind (M1 only - no raylib)
@@ -284,18 +299,86 @@ make milestone6
 - All semaphores unlinked by parent on exit - no resource leaks.
 
 ---
-
+ 
 ### Milestone 7 - Scheduling Algorithms
-*Coming soon*
-
+ 
+**Goal:** Replace non-deterministic semaphore ordering (M6) with a
+parent-managed scheduling policy. When multiple travelers queue outside the
+same node, the parent decides who enters next based on the chosen algorithm.
+ 
+**Run commands:**
+```bash
+make milestone7
+./sim -schd fcfs tests/testm7b.txt    # FCFS demo
+./sim -schd sjf  tests/testm7b.txt    # SJF demo - different admission order!
+```
+ 
+**Architecture change from M6:**
+In M6, `sem_wait()` inside each child determined admission order
+non-deterministically. In M7 the parent owns a `NodeQueue` per node
+(`scheduler.c`) and controls admission explicitly.
+ 
+Each child now has **three pipes**:
+- `c2p` (child→parent): `IpcMsg` stream - `MSG_WAITING`, `MSG_AT_NODE`, `MSG_LEAVING`
+- `p2c` (parent→child): `GO_SIGNAL` byte to start the journey
+- `adm` (parent→child): `ADMIT_SIGNAL` byte to enter a specific node
+**Protocol per node visit (M7 child):**
+1. Send `MSG_WAITING` to parent and block on `read(admit_fd)`.
+2. Parent calls `sched_request()` - if node is free, sends `ADMIT_SIGNAL` immediately;
+   otherwise queues the request.
+3. Child unblocks, sends `MSG_AT_NODE`, sleeps 1 second (critical section).
+4. Child sends `MSG_LEAVING` and travels to the next node.
+5. Parent calls `sched_release()` - picks the next waiter per the algorithm
+   and sends it `ADMIT_SIGNAL`.
+**New files:**
+- `src/scheduler.c` / `include/scheduler.h` - `NodeQueue` struct,
+  `sched_init()`, `sched_request()`, `sched_release()`, `sched_algo_name()`.
+**Algorithms implemented:**
+ 
+| Flag | Algorithm | Selection key | Tie-breaking |
+|------|-----------|---------------|--------------|
+| `fcfs` | First Come First Served | Earliest arrival sequence | - |
+| `sjf`  | Shortest Job First | Fewest remaining hops | Earlier arrival |
+ 
+**`testm7b.txt` demo - why FCFS and SJF differ:**
+ 
+3 travelers all arrive at bottleneck node 3 at roughly the same time
+(all start edges have weight 3 = 900 ms travel). After node 3 their
+remaining paths to their destinations differ:
+ 
+| Traveler | Route | Hops after node 3 |
+|----------|-------|-------------------|
+| T1 (0→7) | 0→3→4→5→6→7 | 4 |
+| T2 (1→6) | 1→3→4→5→6   | 3 |
+| T3 (2→4) | 2→3→4       | 1 |
+ 
+- **FCFS at node 3:** T1 → T2 → T3 (wall-clock arrival order)
+- **SJF  at node 3:** T1 → **T3** → T2 (T3 has fewest hops, jumps ahead of T2)
+**How scheduling affects total wait time:**
+- Under FCFS, T3 (1 hop left) waits behind T2 (3 hops) unnecessarily.
+- Under SJF, T3 enters before T2, finishing ~2 seconds sooner. Longer jobs
+  wait more, but overall throughput improves for short jobs.
+**GUI change:** active scheduler name displayed in top-left corner.
+Label is only shown in Milestone 7; earlier milestones show no label.
+ 
+**Self-check:**
+- Both algorithms compile and run without warnings.
+- `make test-m7` demonstrates different admission orders back-to-back.
+- No deadlocks - `MSG_LEAVING` is sent even at the destination node,
+  ensuring waiters are never permanently blocked.
+- No zombie processes, no resource leaks.
 ---
-
-## Git Workflow
-
+ 
+### Git Workflow
+ 
 - Each milestone is developed on its own branch (`milestone1`, `milestone2`, …).
 - Merge into `main` only when a milestone is complete and tested.
-- Tag each submission:
-  ```bash
-  git tag milestone6
-  git push origin milestone6 --tags
-  ```
+- Tag each milestone submission in the format `milestone1`, `milestone2`, etc.
+- The **final submission** requires two tags: `milestone7` and `final`.
+```bash
+# After final commit:
+git tag milestone7
+git tag final
+git push origin milestone7 final --tags
+```
+ 
