@@ -6,11 +6,13 @@
 #include <signal.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include "raylib.h"
 #include "renderer.h"
 #include "ipc.h"
 #include "graph.h"
+#include "scheduler.h"
 
 /* ── Color palette ─────────────────────────────────────────── */
 #define COL_BG          ((Color){ 15,  17,  26, 255})
@@ -24,8 +26,8 @@
 #define COL_TITLE       ((Color){ 80, 140, 255, 255})
 #define COL_BTN_PLAY    ((Color){ 40, 180,  80, 255})
 #define COL_BTN_STOP    ((Color){200,  60,  60, 255})
-/* M6: colour used to draw a train that is waiting outside a locked node */
 #define COL_WAITING     ((Color){255, 165,   0, 255})
+#define COL_ALGO_LABEL  ((Color){160, 255, 160, 255})
 
 static const Color TRAVELER_COLORS[MAX_TRAVELERS] = {
     {255,  80,  80, 255},  {  80, 200, 255, 255},
@@ -94,7 +96,6 @@ static void draw_weight_label(float x1, float y1, float x2, float y2, int w) {
     DrawText(buf, (int)(mx-tw/2), (int)(my-7), 14, COL_WEIGHT);
 }
 
-/* Returns true if node u is the current or next stop of any traveler */
 static bool node_is_active(int u, const TrainAnim *anims, int num) {
     for (int t = 0; t < num; t++) {
         if (anims[t].phase == PHASE_ARRIVED) continue;
@@ -103,7 +104,6 @@ static bool node_is_active(int u, const TrainAnim *anims, int num) {
     return false;
 }
 
-/* Returns true if directed edge u->v is the current segment of any traveler */
 static bool edge_is_active(int u, int v, const TrainAnim *anims, int num,
                             int *owner) {
     for (int t = 0; t < num; t++) {
@@ -116,7 +116,6 @@ static bool edge_is_active(int u, int v, const TrainAnim *anims, int num,
     return false;
 }
 
-/* Returns true if edge u->v is anywhere on traveler t's full stored path */
 static bool edge_on_full_path(int u, int v, const TrainAnim *a) {
     if (!a->path || a->path_len < 2) return false;
     for (int i = 0; i < a->path_len - 1; i++)
@@ -131,11 +130,19 @@ void renderer_draw_graph(const Graph     *g,
                          const char     **station_names,
                          const TrainAnim *anims,
                          int              num_travelers,
-                         int              animate)
+                         int              animate,
+                         SchedAlgo        algo)
 {
     ClearBackground(COL_BG);
     draw_grid();
     DrawText("TrainOS  |  Railway Network", 25, 20, 22, COL_TITLE);
+
+    /* Active scheduler label — only shown in Milestone 7 */
+    if (algo != SCHED_NONE) {
+        char algo_buf[32];
+        snprintf(algo_buf, sizeof(algo_buf), "Scheduler: %s", sched_algo_name(algo));
+        DrawText(algo_buf, 25, 48, 16, COL_ALGO_LABEL);
+    }
 
     /* Edges */
     for (int u = 0; u < g->num_vertices; u++) {
@@ -165,15 +172,13 @@ void renderer_draw_graph(const Graph     *g,
         }
     }
 
-    /* Nodes — highlight locked nodes (M6: any traveler waiting for them) */
+    /* Nodes */
     for (int i = 0; i < g->num_vertices; i++) {
         Color border = COL_NODE_BORDER;
 
-        /* Active node highlight (animated modes) */
         if (animate && anims && node_is_active(i, anims, num_travelers))
             border = WHITE;
 
-        /* Tint source/destination nodes per traveler */
         for (int t = 0; anims && t < num_travelers; t++) {
             if (i == anims[t].src_id || i == anims[t].dst_id) {
                 border = TRAVELER_COLORS[anims[t].color_index % MAX_TRAVELERS];
@@ -181,8 +186,7 @@ void renderer_draw_graph(const Graph     *g,
             }
         }
 
-        /* M6: if any traveler is WAITING for this node, draw a red ring
-           around it to signal it is currently locked / occupied. */
+        /* Orange ring if any traveler is waiting for this node */
         bool node_locked = false;
         for (int t = 0; anims && t < num_travelers; t++) {
             if (anims[t].phase == PHASE_WAITING &&
@@ -191,11 +195,9 @@ void renderer_draw_graph(const Graph     *g,
                 break;
             }
         }
-        if (node_locked) {
-            /* Extra outer ring in warning orange */
+        if (node_locked)
             DrawCircleLines((int)pos[i].x, (int)pos[i].y,
                             NODE_RADIUS + 10, COL_WAITING);
-        }
 
         DrawCircle((int)pos[i].x,(int)pos[i].y, NODE_RADIUS+5, Fade(border,0.3f));
         DrawCircle((int)pos[i].x,(int)pos[i].y, NODE_RADIUS,   COL_NODE);
@@ -222,13 +224,12 @@ void renderer_draw_graph(const Graph     *g,
     DrawRectangleLines(lx-10, ly-10, 190, 24*num_travelers+20, COL_GRID);
     for (int t = 0; anims && t < num_travelers; t++) {
         Color tc = TRAVELER_COLORS[anims[t].color_index % MAX_TRAVELERS];
-        /* M6: waiting travelers shown in orange in the legend too */
         if (anims[t].phase == PHASE_WAITING) tc = COL_WAITING;
         DrawCircle(lx, ly+t*24, 7, tc);
         char leg[64];
         const char *status = "";
-        if (anims[t].phase == PHASE_ARRIVED)       status = " [arrived]";
-        else if (anims[t].phase == PHASE_WAITING)  status = " [waiting]";
+        if (anims[t].phase == PHASE_ARRIVED)      status = " [arrived]";
+        else if (anims[t].phase == PHASE_WAITING) status = " [waiting]";
         snprintf(leg, sizeof(leg), "Train %d: %d->%d%s",
                  t+1, anims[t].src_id, anims[t].dst_id, status);
         DrawText(leg, lx+16, ly+t*24-7, 12, WHITE);
@@ -262,8 +263,6 @@ static void draw_train(const TrainAnim *a, int offset_index,
                        const Vec2 *pos) {
     if (a->phase == PHASE_ARRIVED) return;
 
-    /* M6: waiting trains are drawn in orange at the perimeter of the
-       target node instead of their current travelling position. */
     Color tc   = TRAVELER_COLORS[a->color_index % MAX_TRAVELERS];
     Color glow = tc; glow.a = 60;
     float cx, cy;
@@ -271,7 +270,6 @@ static void draw_train(const TrainAnim *a, int offset_index,
     if (a->phase == PHASE_WAITING) {
         tc      = COL_WAITING;
         glow    = tc; glow.a = 60;
-        /* Place the waiting icon just outside the locked node ring */
         float angle = (float)offset_index * (2.0f * 3.14159265f / MAX_TRAVELERS);
         float r     = (float)(NODE_RADIUS + 20);
         cx = pos[a->waiting_for_node].x + r * cosf(angle);
@@ -287,7 +285,6 @@ static void draw_train(const TrainAnim *a, int offset_index,
     DrawCircle((int)cx,(int)cy, NODE_RADIUS-10, tc);
     DrawCircleLines((int)cx,(int)cy, NODE_RADIUS-10, WHITE);
 
-    /* M6: draw a small "W" badge on waiting trains for clarity */
     if (a->phase == PHASE_WAITING) {
         DrawText("W", (int)(cx-5), (int)(cy-7), 13, WHITE);
     } else {
@@ -331,20 +328,17 @@ static void anim_update(TrainAnim *a, const Graph *g,
     if (paused || a->phase == PHASE_ARRIVED || a->phase == PHASE_WAITING)
         return;
 
-    /* M2/M3/M4 path-driven: after station pause, start next segment */
     if (a->phase == PHASE_IDLE) {
-        if (a->path == NULL) return;   /* M5/M6: wait for IPC message */
+        if (a->path == NULL) return;
         a->timer_ms += delta_ms;
         if (a->timer_ms >= MS_STATION_WAIT) {
             a->timer_ms = 0.0;
-            if (a->seg + 1 < a->path_len) {
+            if (a->seg + 1 < a->path_len)
                 a->phase = PHASE_TRAVELLING;
-            }
         }
         return;
     }
 
-    /* PHASE_TRAVELLING: slide from cur_node to next_node */
     int u = a->cur_node;
     int v = a->next_node;
     int w = edge_weight_lookup(g, u, v);
@@ -363,42 +357,132 @@ static void anim_update(TrainAnim *a, const Graph *g,
         a->timer_ms = 0.0;
 
         if (a->path != NULL) {
-            /* M2/M3/M4: path-driven — auto-advance to next segment */
             a->seg++;
             a->cur_node = a->path[a->seg];
             if (a->seg + 1 < a->path_len) {
-                a->next_node  = a->path[a->seg + 1];
-                a->phase      = PHASE_IDLE;
+                a->next_node = a->path[a->seg + 1];
+                a->phase     = PHASE_IDLE;
             } else {
                 a->next_node = -1;
                 a->phase     = PHASE_ARRIVED;
             }
         } else {
-            /* M5/M6: IPC-driven — wait for next message from child */
             a->phase = PHASE_IDLE;
         }
     }
 }
 
-/* ── IPC polling ─────────────────────────────────────────────── */
+/* ── IPC polling (M5/M6/M7) ─────────────────────────────────── */
 
 /*
- * Read at most ONE IpcMsg per call.
- *
- * M6 adds a second message type: MSG_WAITING.
- *   When received, the animation transitions to PHASE_WAITING and the
- *   train is drawn outside the locked node until MSG_AT_NODE arrives.
+ * poll_pipe_m7: reads one IpcMsg and handles M7 scheduling.
+ *   MSG_WAITING : parent decides admit or queue via sched_request().
+ *   MSG_AT_NODE : update animation.
+ *   MSG_LEAVING : parent calls sched_release() to wake next waiter.
  */
-static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
-    /* Skip if no pipe or train is mid-slide (don't race ahead) */
+/*
+ * poll_pipe_m7: reads one IpcMsg from a child's pipe and handles
+ * M7 parent-side scheduling.
+ *
+ * Parameters:
+ *   a            – animation state for this traveler
+ *   traveler_idx – index in the parent's traveler arrays
+ *   fd           – child->parent read fd (non-blocking)
+ *   pos          – node screen positions
+ *   paused       – whether the simulation is paused
+ *   queues       – per-node scheduling queues
+ *   admit_fds    – parent->child admit pipe write-ends
+ *   algo         – scheduling algorithm
+ *   seq          – monotonic sequence counter for FCFS ordering
+ *   all_anims    – full anim array (to look up PIDs of admitted travelers)
+ */
+static void poll_pipe_m7(TrainAnim *a, int traveler_idx, int fd,
+                          const Vec2 *pos, int paused,
+                          NodeQueue *queues, int *admit_fds,
+                          SchedAlgo algo, long *seq,
+                          TrainAnim *all_anims)
+{
     if (fd < 0 || a->phase == PHASE_TRAVELLING) return;
 
     IpcMsg msg;
     ssize_t n = read(fd, &msg, sizeof(IpcMsg));
-    if (n != (ssize_t)sizeof(IpcMsg)) return;   /* EAGAIN = no data yet */
+    if (n != (ssize_t)sizeof(IpcMsg)) return;
+
+    /* Once ARRIVED, only MSG_LEAVING is meaningful (releases the node
+     * for waiting travelers). Ignore any other stale messages. */
+    if (a->phase == PHASE_ARRIVED && msg.type != MSG_LEAVING) return;
+
+    switch (msg.type) {
+
+    case MSG_WAITING: {
+        a->waiting_for_node = msg.current_node;
+        a->phase            = PHASE_WAITING;
+        int admitted = sched_request(queues, msg.current_node,
+                                     traveler_idx, msg.remaining_hops, seq);
+        if (admitted) {
+            /* Node was free — admit immediately */
+            char sig = ADMIT_SIGNAL;
+            (void)write(admit_fds[traveler_idx], &sig, 1);
+            printf("[PID=%d] admitted to node %d (%s, immediate)\n",
+                   (int)a->child_pid, msg.current_node,
+                   sched_algo_name(algo));
+        } else {
+            printf("[PID=%d] waiting outside node %d (%s)\n",
+                   (int)a->child_pid, msg.current_node,
+                   sched_algo_name(algo));
+        }
+        fflush(stdout);
+        break;
+    }
+
+    case MSG_AT_NODE:
+        a->cur_node         = msg.current_node;
+        a->next_node        = msg.next_node;
+        a->waiting_for_node = -1;
+        if (msg.next_node == -1) {
+            printf("[PID=%d] arrived at node %d | DESTINATION\n",
+                   (int)a->child_pid, msg.current_node);
+            a->train_x = pos[msg.current_node].x;
+            a->train_y = pos[msg.current_node].y;
+            a->phase   = PHASE_ARRIVED;
+        } else {
+            printf("[PID=%d] arrived at node %d | next node: %d\n",
+                   (int)a->child_pid, msg.current_node, msg.next_node);
+            if (!paused) {
+                a->timer_ms = 0.0;
+                a->phase    = PHASE_TRAVELLING;
+            } else {
+                a->train_x = pos[msg.current_node].x;
+                a->train_y = pos[msg.current_node].y;
+                a->phase   = PHASE_IDLE;
+            }
+        }
+        fflush(stdout);
+        break;
+
+    case MSG_LEAVING: {
+        /* Release the node and admit the next waiter (if any) */
+        int next_tidx = sched_release(queues, msg.current_node,
+                                      algo, admit_fds);
+        if (next_tidx >= 0)
+            printf("[PID=%d] admitted to node %d (%s, scheduled)\n",
+                   (int)all_anims[next_tidx].child_pid, msg.current_node,
+                   sched_algo_name(algo));
+        fflush(stdout);
+        break;
+    }
+    }
+}
+
+/* Original poll_pipe for M5/M6 (no scheduling, no admit_fds) */
+static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
+    if (fd < 0 || a->phase == PHASE_TRAVELLING) return;
+
+    IpcMsg msg;
+    ssize_t n = read(fd, &msg, sizeof(IpcMsg));
+    if (n != (ssize_t)sizeof(IpcMsg)) return;
 
     if (msg.type == MSG_WAITING) {
-        /* Child is queued outside the node — show waiting state */
         printf("[PID=%d] waiting outside node %d\n",
                (int)a->child_pid, msg.current_node);
         fflush(stdout);
@@ -407,7 +491,9 @@ static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
         return;
     }
 
-    /* MSG_AT_NODE: child entered the node and holds the lock */
+    if (msg.type == MSG_LEAVING) return;  /* M6 doesn't use MSG_LEAVING */
+
+    /* MSG_AT_NODE */
     if (msg.next_node == -1)
         printf("[PID=%d] arrived at node %d | DESTINATION\n",
                (int)a->child_pid, msg.current_node);
@@ -428,7 +514,6 @@ static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
         a->timer_ms = 0.0;
         a->phase    = PHASE_TRAVELLING;
     } else {
-        /* Paused: snap position and wait */
         a->train_x = pos[msg.current_node].x;
         a->train_y = pos[msg.current_node].y;
         a->phase   = PHASE_IDLE;
@@ -443,7 +528,9 @@ void renderer_run(const Graph  *g,
                   int           num_travelers,
                   int          *read_fds,
                   int          *go_fds,
-                  int           animate)
+                  int          *admit_fds,
+                  int           animate,
+                  SchedAlgo     algo)
 {
     Vec2 positions[MAX_NODES];
     renderer_compute_positions(g->num_vertices, positions);
@@ -456,7 +543,7 @@ void renderer_run(const Graph  *g,
         }
     }
 
-    /* Snap every train to its source node before the loop */
+    /* Snap trains to source nodes */
     for (int t = 0; t < num_travelers; t++) {
         int s = anims[t].src_id;
         if (s >= 0 && s < g->num_vertices) {
@@ -464,6 +551,14 @@ void renderer_run(const Graph  *g,
             anims[t].train_y = positions[s].y;
         }
         anims[t].waiting_for_node = -1;
+    }
+
+    /* M7: parent-side scheduling state */
+    NodeQueue *queues = NULL;
+    long seq = 0;
+    if (admit_fds != NULL) {
+        queues = calloc((size_t)g->num_vertices, sizeof(NodeQueue));
+        if (queues) sched_init(queues, g->num_vertices);
     }
 
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -475,7 +570,6 @@ void renderer_run(const Graph  *g,
     while (!WindowShouldClose()) {
         double delta_ms = GetFrameTime() * 1000.0;
 
-        /* Toggle play/stop */
         if (button_clicked()) {
             global_paused = !global_paused;
             if (!global_paused) {
@@ -501,22 +595,29 @@ void renderer_run(const Graph  *g,
             }
         }
 
-        /* Poll pipes and advance animations */
         if (animate) {
             for (int t = 0; t < num_travelers; t++) {
-                if (anims[t].phase != PHASE_ARRIVED)
+                if (admit_fds != NULL && queues != NULL) {
+                    /* M7: always poll even if ARRIVED — the destination node
+                     * sends MSG_LEAVING after its 1-second stay, and that
+                     * message must be consumed so the parent can release the
+                     * node and unblock any travelers waiting outside it. */
+                    poll_pipe_m7(&anims[t], t, read_fds[t], positions,
+                                 global_paused, queues, admit_fds, algo,
+                                 &seq, anims);
+                } else {
+                    if (anims[t].phase == PHASE_ARRIVED) continue;
                     poll_pipe(&anims[t], read_fds[t], positions, global_paused);
+                }
             }
             for (int t = 0; t < num_travelers; t++)
                 anim_update(&anims[t], g, positions, delta_ms, global_paused);
         }
 
         BeginDrawing();
-
         renderer_draw_graph(g, positions, station_names, anims,
-                            num_travelers, animate);
+                            num_travelers, animate, algo);
 
-        /* PLAY/STOP button */
         int any_active = 0;
         for (int t = 0; t < num_travelers; t++)
             if (anims[t].phase != PHASE_ARRIVED) { any_active = 1; break; }
@@ -534,7 +635,6 @@ void renderer_run(const Graph  *g,
 
         EndDrawing();
 
-        /* Exit when all travelers have arrived */
         int all_done = 1;
         for (int t = 0; t < num_travelers; t++)
             if (anims[t].phase != PHASE_ARRIVED) { all_done = 0; break; }
@@ -542,6 +642,7 @@ void renderer_run(const Graph  *g,
     }
 
     CloseWindow();
+    if (queues) free(queues);
 
     for (int t = 0; t < num_travelers; t++)
         if (anims[t].child_pid > 0)
