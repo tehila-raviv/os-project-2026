@@ -9,29 +9,19 @@
  *                         user presses PLAY, allowing the child to
  *                         start its journey.
  *
- * Why pipes?
- *   - Simple and portable — no setup beyond pipe().
- *   - Each child has its own dedicated pair so the parent always knows
- *     which child sent a message without an ID field in the packet.
- *   - FDs close automatically on process exit — no cleanup needed.
- *   - Works naturally with select() for fair message interleaving.
- *   - The GO_SIGNAL pattern elegantly solves the PLAY-button sync:
- *     children block on read() until the parent sends the signal,
- *     so no animation data is produced before the user presses PLAY.
- *
  * Synchronization mechanism (Milestone 6): POSIX named semaphores.
  *   One semaphore per graph node, named "/trainos_node_N".
- *   Each semaphore is initialized to 1 (binary mutex).
- *   A child calls sem_wait() before entering a node and sem_post()
- *   after the 1-second stay, enforcing mutual exclusion per node.
  *
- * Why named semaphores?
- *   - Work across unrelated processes (unlike unnamed sem_init with
- *     PTHREAD_PROCESS_SHARED which requires shared memory setup).
- *   - Persistent until explicitly unlinked — parent creates them
- *     before fork() and unlinks them after all children finish.
- *   - Blocking sem_wait() provides starvation-free waiting with no
- *     busy-spin, and the OS guarantees every waiter eventually wakes.
+ * Scheduling (Milestone 7): parent-managed wait queues per node.
+ *   When a child wants to enter a busy node it sends MSG_WAITING.
+ *   The parent queues the request and, when the node is free, picks
+ *   the next child according to the chosen scheduling algorithm
+ *   (FCFS or SJF) and sends it an ADMIT_SIGNAL via a dedicated
+ *   admit pipe (one per child, parent->child direction).
+ *
+ * Scheduling algorithms supported:
+ *   SCHED_FCFS  - First Come First Served (arrival order)
+ *   SCHED_SJF   - Shortest Job First (fewest remaining path hops)
  */
 
 #include <sys/types.h>   /* pid_t */
@@ -46,22 +36,34 @@
 #define MS_NODE_STAY  1000
 
 /* Single byte sent from parent to child to start the journey */
-#define GO_SIGNAL  ((char)1)
+#define GO_SIGNAL     ((char)1)
+
+/* Single byte sent from parent to child to admit it into a node (M7) */
+#define ADMIT_SIGNAL  ((char)2)
 
 /* Named semaphore prefix for node locks (Milestone 6) */
 #define NODE_SEM_PREFIX  "/trainos_node_"
 
+/* ── Scheduling algorithm selector (Milestone 7) ── */
+typedef enum {
+    SCHED_NONE = -1,  /* No scheduling — used by milestones 1-6     */
+    SCHED_FCFS = 0,   /* First Come First Served                    */
+    SCHED_SJF  = 1    /* Shortest Job First (remaining hops)        */
+} SchedAlgo;
+
 /* Message types sent from child to parent */
 typedef enum {
-    MSG_AT_NODE = 0,  /* child arrived at and entered a node (holds the lock) */
-    MSG_WAITING  = 1  /* child is waiting outside a node (blocked on semaphore) */
+    MSG_AT_NODE  = 0,  /* child arrived at and entered a node        */
+    MSG_WAITING  = 1,  /* child is waiting outside a node            */
+    MSG_LEAVING  = 2   /* child is leaving a node (node now free)    */
 } IpcMsgType;
 
 /* Message sent from child to parent on every node event */
 typedef struct {
-    IpcMsgType type;        /* MSG_AT_NODE or MSG_WAITING                   */
-    int        current_node; /* node the child just arrived at / waiting for */
-    int        next_node;    /* next node on the path (-1 = DESTINATION)     */
+    IpcMsgType type;          /* MSG_AT_NODE, MSG_WAITING, or MSG_LEAVING */
+    int        current_node;  /* node the child arrived at / waiting for  */
+    int        next_node;     /* next node on path (-1 = DESTINATION)     */
+    int        remaining_hops;/* hops left in path after current node (SJF) */
 } IpcMsg;
 
 #endif /* IPC_H */
