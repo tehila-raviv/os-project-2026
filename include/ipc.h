@@ -41,6 +41,9 @@
 /* Single byte sent from parent to child to admit it into a node (M7) */
 #define ADMIT_SIGNAL  ((char)2)
 
+/* Single byte sent from parent to child after receiving an IPC message */
+#define ACK_SIGNAL    ((char)3)
+
 /* Named semaphore prefix for node locks (Milestone 6) */
 #define NODE_SEM_PREFIX  "/trainos_node_"
 
