@@ -56,6 +56,7 @@ typedef enum {
     MSG_AT_NODE  = 0,  /* child arrived at and entered a node        */
     MSG_WAITING  = 1,  /* child is waiting outside a node            */
     MSG_LEAVING  = 2   /* child is leaving a node (node now free)    */
+    MSG_NO_PATH  = 3   /* change no.1 child found no path to destination         */
 } IpcMsgType;
 
 /* Message sent from child to parent on every node event */
