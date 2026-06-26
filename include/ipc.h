@@ -55,12 +55,13 @@ typedef enum {
 typedef enum {
     MSG_AT_NODE  = 0,  /* child arrived at and entered a node        */
     MSG_WAITING  = 1,  /* child is waiting outside a node            */
-    MSG_LEAVING  = 2   /* child is leaving a node (node now free)    */
+    MSG_LEAVING  = 2,  /* child is leaving a node (node now free)    */
+    MSG_NO_PATH  = 3   /* child found no route to destination        */
 } IpcMsgType;
 
 /* Message sent from child to parent on every node event */
 typedef struct {
-    IpcMsgType type;          /* MSG_AT_NODE, MSG_WAITING, or MSG_LEAVING */
+    IpcMsgType type;          /* MSG_AT_NODE, MSG_WAITING, MSG_LEAVING, or MSG_NO_PATH */
     int        current_node;  /* node the child arrived at / waiting for  */
     int        next_node;     /* next node on path (-1 = DESTINATION)     */
     int        remaining_hops;/* hops left in path after current node (SJF) */

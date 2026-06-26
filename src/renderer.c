@@ -471,6 +471,13 @@ static void poll_pipe_m7(TrainAnim *a, int traveler_idx, int fd,
         fflush(stdout);
         break;
     }
+
+    case MSG_NO_PATH:
+        printf("[PID=%d] ERROR: no path from node %d to destination\n",
+               (int)a->child_pid, msg.current_node);
+        fflush(stdout);
+        a->phase = PHASE_ARRIVED;
+        break;
     }
 }
 
@@ -481,6 +488,14 @@ static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
     IpcMsg msg;
     ssize_t n = read(fd, &msg, sizeof(IpcMsg));
     if (n != (ssize_t)sizeof(IpcMsg)) return;
+
+    if (msg.type == MSG_NO_PATH) {
+        printf("[PID=%d] ERROR: no path from node %d to destination\n",
+               (int)a->child_pid, msg.current_node);
+        fflush(stdout);
+        a->phase = PHASE_ARRIVED;  /* remove traveler from animation */
+        return;
+    }
 
     if (msg.type == MSG_WAITING) {
         printf("[PID=%d] waiting outside node %d\n",

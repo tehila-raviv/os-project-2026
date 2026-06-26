@@ -308,7 +308,8 @@ static void child_main_m5(const char *filename, int src, int dst,
     DijkstraResult res = dijkstra_run(g, src, dst);
 
     if (!res.found || res.path_len == 0) {
-        IpcMsg msg = { MSG_AT_NODE, src, -1, 0 };
+        /* No route exists — notify parent with a dedicated message type */
+        IpcMsg msg = { MSG_NO_PATH, src, -1, 0 };
         (void)write(write_fd, &msg, sizeof(IpcMsg));
         dijkstra_free_result(&res); graph_free(g);
         close(write_fd); exit(EXIT_SUCCESS);
@@ -440,7 +441,10 @@ int main(int argc, char *argv[]) {
             if (done[i] || !FD_ISSET(read_fds[i], &rfds)) continue;
             IpcMsg msg;
             if (read(read_fds[i], &msg, sizeof(IpcMsg)) == (ssize_t)sizeof(IpcMsg)) {
-                if (msg.type == MSG_WAITING)
+                if (msg.type == MSG_NO_PATH)
+                    printf("[PID=%d] ERROR: no path from node %d to destination\n",
+                           (int)child_pids[i], msg.current_node);
+                else if (msg.type == MSG_WAITING)
                     printf("[PID=%d] waiting outside node %d\n",
                            (int)child_pids[i], msg.current_node);
                 else if (msg.next_node == -1)
