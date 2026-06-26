@@ -475,12 +475,20 @@ static void poll_pipe_m7(TrainAnim *a, int traveler_idx, int fd,
 }
 
 /* Original poll_pipe for M5/M6 (no scheduling, no admit_fds) */
-static void poll_pipe(TrainAnim *a, int fd, const Vec2 *pos, int paused) {
+static void poll_pipe(TrainAnim *a, int fd, int ack_fd,
+                      const Vec2 *pos, int paused) {
     if (fd < 0 || a->phase == PHASE_TRAVELLING) return;
 
     IpcMsg msg;
     ssize_t n = read(fd, &msg, sizeof(IpcMsg));
     if (n != (ssize_t)sizeof(IpcMsg)) return;
+
+#ifdef MILESTONE5
+    if (ack_fd >= 0) {
+        char ack = ACK_SIGNAL;
+        (void)write(ack_fd, &ack, 1);
+    }
+#endif
 
     if (msg.type == MSG_WAITING) {
         printf("[PID=%d] waiting outside node %d\n",
@@ -566,6 +574,7 @@ void renderer_run(const Graph  *g,
     SetTargetFPS(60);
 
     int global_paused = 1;
+    int children_started = 0;
 
     while (!WindowShouldClose()) {
         double delta_ms = GetFrameTime() * 1000.0;
@@ -573,15 +582,18 @@ void renderer_run(const Graph  *g,
         if (button_clicked()) {
             global_paused = !global_paused;
             if (!global_paused) {
-                if (go_fds) {
+                if (go_fds && !children_started) {
                     for (int t = 0; t < num_travelers; t++) {
                         if (go_fds[t] > 0) {
                             char go = GO_SIGNAL;
                             (void)write(go_fds[t], &go, 1);
+#ifndef MILESTONE5
                             close(go_fds[t]);
                             go_fds[t] = -1;
+#endif
                         }
                     }
+                    children_started = 1;
                 } else {
                     for (int t = 0; t < num_travelers; t++) {
                         if (anims[t].phase == PHASE_IDLE &&
@@ -607,7 +619,11 @@ void renderer_run(const Graph  *g,
                                  &seq, anims);
                 } else {
                     if (anims[t].phase == PHASE_ARRIVED) continue;
-                    poll_pipe(&anims[t], read_fds[t], positions, global_paused);
+                    poll_pipe(&anims[t],
+                              read_fds[t],
+                              go_fds ? go_fds[t] : -1,
+                              positions,
+                              global_paused);
                 }
             }
             for (int t = 0; t < num_travelers; t++)
