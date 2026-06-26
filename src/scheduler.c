@@ -80,6 +80,26 @@ int sched_release(NodeQueue *queues, int node_id,
     int best_pos = pick_next(nq, algo);
     int tidx     = nq->queue[best_pos].traveler_idx;
 
+    /* PRINT SCHEDULER DECISION */
+    printf("\n[SCHEDULER DECISION]\n");
+    printf("Waiting: ");
+    for (int i = 0; i < nq->queue_len; i++) {
+        printf("T%d ", nq->queue[i].traveler_idx);
+    }
+    printf("\n");
+    
+    printf("Chosen: T%d\n", tidx);
+    
+    if (algo == SCHED_SJF) {
+        printf("Why: SJF - T%d has %d hops (shortest)\n", 
+               tidx, nq->queue[best_pos].remaining_hops);
+    } else {
+        printf("Why: FCFS - T%d arrived first (seq=%ld)\n", 
+               tidx, nq->queue[best_pos].arrival_seq);
+    }
+    printf("\n");
+    fflush(stdout);
+
     /* Remove the chosen entry by shifting the rest left */
     for (int i = best_pos; i < nq->queue_len - 1; i++)
         nq->queue[i] = nq->queue[i + 1];
