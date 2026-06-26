@@ -294,13 +294,38 @@ int main(int argc, char *argv[]) {
  * ════════════════════════════════════════════════════════════════ */
 #elif defined(MILESTONE5)
 
+static int send_msg_and_wait_ack(int write_fd, int ack_fd, const IpcMsg *msg)
+{
+    char ack = 0;
+    ssize_t n;
+
+    if (write(write_fd, msg, sizeof(*msg)) != (ssize_t)sizeof(*msg))
+        return 0;
+
+    /*
+     * Child sent a message to the parent.
+     * It must wait until the parent reads it and sends ACK_SIGNAL back.
+     */
+    while (1) {
+        n = read(ack_fd, &ack, 1);
+        if (n == 1)
+            return ack == ACK_SIGNAL;
+        if (n == 0)
+            return 0;
+    }
+}
+
 static void child_main_m5(const char *filename, int src, int dst,
                            int write_fd, int go_fd)
 {
     signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
     char go = 0;
     while (read(go_fd, &go, 1) != 1) ;
-    close(go_fd);
+
+    /*
+     * Do not close go_fd here.
+     * After GO_SIGNAL, the same parent->child pipe is used for ACK_SIGNAL.
+     */
 
     TravelerQuery *tq = NULL; int nq = 0;
     Graph *g = parser_load(filename, &tq, &nq);
@@ -309,16 +334,21 @@ static void child_main_m5(const char *filename, int src, int dst,
 
     if (!res.found || res.path_len == 0) {
         IpcMsg msg = { MSG_AT_NODE, src, -1, 0 };
-        (void)write(write_fd, &msg, sizeof(IpcMsg));
-        dijkstra_free_result(&res); graph_free(g);
-        close(write_fd); exit(EXIT_SUCCESS);
+        (void)send_msg_and_wait_ack(write_fd, go_fd, &msg);
+
+        dijkstra_free_result(&res);
+        graph_free(g);
+        close(go_fd);
+        close(write_fd);
+        exit(EXIT_SUCCESS);
     }
     for (int i = 0; i < res.path_len; i++) {
         int cur  = res.path[i];
         int next = (i + 1 < res.path_len) ? res.path[i + 1] : -1;
         int hops = res.path_len - 1 - i;
         IpcMsg msg = { MSG_AT_NODE, cur, next, hops };
-        if (write(write_fd, &msg, sizeof(IpcMsg)) != (ssize_t)sizeof(IpcMsg)) break;
+        if (!send_msg_and_wait_ack(write_fd, go_fd, &msg))
+            break;
         if (next != -1) {
             EdgeNode *e = g->lists[cur].head;
             int w = 1;
@@ -329,8 +359,11 @@ static void child_main_m5(const char *filename, int src, int dst,
             nanosleep(&ts, NULL);
         }
     }
-    dijkstra_free_result(&res); graph_free(g);
-    close(write_fd); exit(EXIT_SUCCESS);
+    dijkstra_free_result(&res);
+    graph_free(g);
+    close(go_fd);
+    close(write_fd);
+    exit(EXIT_SUCCESS);
 }
 
 int main(int argc, char *argv[]) {
@@ -424,7 +457,11 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_travelers; i++) {
         char go = GO_SIGNAL;
         (void)write(go_fds[i], &go, 1);
-        close(go_fds[i]);
+
+        /*
+         * Do not close go_fds[i] here.
+         * It is used later to send ACK_SIGNAL back to the child.
+         */
     }
     int done[MAX_TRAVELERS] = {0};
     int finished = 0;
@@ -449,12 +486,21 @@ int main(int argc, char *argv[]) {
                 else
                     printf("[PID=%d] arrived at node %d | next node: %d\n",
                            (int)child_pids[i], msg.current_node, msg.next_node);
+
+                /*
+                 * Parent confirms it has read the message.
+                 * Only after this ACK the child continues to the next node.
+                 */
+                char ack = ACK_SIGNAL;
+                (void)write(go_fds[i], &ack, 1);
+
                 fflush(stdout);
             } else { done[i] = 1; finished++; }
         }
     }
 #endif
     for (int i = 0; i < num_travelers; i++) close(read_fds[i]);
+    for (int i = 0; i < num_travelers; i++) close(go_fds[i]);
     for (int i = 0; i < num_travelers; i++) {
         if (child_pids[i] > 0) {
             waitpid(child_pids[i], NULL, 0);
